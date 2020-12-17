@@ -29,15 +29,15 @@ int main(int argc, char **argv)
 	fprintf(stderr, "usage: %s <port>\n", argv[0]);
 	exit(1);
     }
+    //this listenfd now is associated with a IP address and is a server fd
     listenfd = Open_listenfd(argv[1]);
     while (1) {
 	clientlen = sizeof(clientaddr);
 	connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); //line:netp:tiny:accept
-    printf("1\n");
+    
         Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE, 
                     port, MAXLINE, 0);
         printf("Accepted connection from (%s, %s)\n", hostname, port);
-        //printf("%s", user_agent_hdr);
 
 	doit(connfd);                                             //line:netp:tiny:doit
 	Close(connfd);                                            //line:netp:tiny:close
@@ -47,16 +47,17 @@ int main(int argc, char **argv)
 /*
  * doit - handle one HTTP request/response transaction
  */
-void doit(int fd) 
+void doit(int fd)
 {
-    int is_static;
+    int is_static, clientfd;
     struct stat sbuf;
-    char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
+    char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE], clientbuf[MAXLINE], servername[MAXLINE], serverport[MAXLINE];
     char filename[MAXLINE], cgiargs[MAXLINE];
-    rio_t rio;
+    rio_t rio, clientrio;
 
     /* Read request line and headers */
     Rio_readinitb(&rio, fd);
+    //read the request line
     if (!Rio_readlineb(&rio, buf, MAXLINE))  //line:netp:doit:readrequest
         return;
     printf("%s", buf);
@@ -65,7 +66,14 @@ void doit(int fd)
         clienterror(fd, method, "501", "Not Implemented",
                     "Tiny does not implement this method");
         return;
-    }                                                    //line:netp:doit:endrequesterr
+    }
+    //get server name and port
+    if (!Rio_readlineb(&rio, buf, MAXLINE))  //line:netp:doit:readrequest
+        return;
+    printf("%s", buf);
+    sscanf(buf, "Host: %[^:]%*c%s", servername, serverport); 
+    printf("servername: %s\n", servername);  
+    printf("serverport: %s\n", serverport);                                       //line:netp:doit:endrequesterr
     read_requesthdrs(&rio);                              //line:netp:doit:readrequesthdrs
 
     /* Parse URI from GET request */
@@ -75,6 +83,23 @@ void doit(int fd)
 		    "Tiny couldn't find this file");
 	return;
     }                                                    //line:netp:doit:endnotfound
+
+    //Proxy as a client
+    clientfd = open_clientfd(servername, serverport);
+    Rio_readinitb(&clientrio, clientfd);
+    while (Fgets(clientbuf, MAXLINE, stdin) != NULL)
+    {
+        Rio_writen(clientfd, clientbuf, strlen(clientbuf));
+        Rio_readlineb(&clientrio, clientbuf, MAXLINE);
+        Fputs(clientbuf, stdout);
+    }
+    Close(clientfd);
+    
+
+
+
+
+
 
     if (is_static) { /* Serve static content */          
 	if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) { //line:netp:doit:readable
