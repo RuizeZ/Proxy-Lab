@@ -3,7 +3,7 @@
 
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
-int parse_uri(char *uri, char *filename, char *cgiargs);
+int parse(char *uri, char *hostname, char *path, char *port);
 void serve_static(int fd, char *filename, int filesize);
 void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs);
@@ -30,9 +30,11 @@ int main(int argc, char **argv)
 	exit(1);
     }
     //this listenfd now is associated with a IP address and is a server fd
+    //Listen for incoming connections on a port which will be specified on the command line
     listenfd = Open_listenfd(argv[1]);
     while (1) {
 	clientlen = sizeof(clientaddr);
+    //wait for connection rquest arrive at, and return a connected descriptor
 	connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); //line:netp:tiny:accept
     
         Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE, 
@@ -52,7 +54,7 @@ void doit(int fd)
     int is_static, clientfd;
     struct stat sbuf;
     char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE], clientbuf[MAXLINE], servername[MAXLINE], serverport[MAXLINE];
-    char filename[MAXLINE], cgiargs[MAXLINE];
+    char filename[MAXLINE], cgiargs[MAXLINE], hostname[MAXLINE], path[MAXLINE], port[5];
     rio_t rio, clientrio;
 
     /* Read request line and headers */
@@ -67,33 +69,46 @@ void doit(int fd)
                     "Tiny does not implement this method");
         return;
     }
-    //get server name and port
-    if (!Rio_readlineb(&rio, buf, MAXLINE))  //line:netp:doit:readrequest
-        return;
+
+    //get rquested name and port
+    Rio_readlineb(&rio, buf, MAXLINE);
     printf("%s", buf);
-    sscanf(buf, "Host: %[^:]%*c%s", servername, serverport); 
-    printf("servername: %s\n", servername);  
-    printf("serverport: %s\n", serverport);                                       //line:netp:doit:endrequesterr
-    read_requesthdrs(&rio);                              //line:netp:doit:readrequesthdrs
+    if(strcmp(buf, "\r\n")) {
+        sscanf(buf, "Host: %[^:]%*c%s", servername, serverport); 
+        printf("servername: %s\n", servername);
+        printf("serverport: %s\n", serverport);  
+        read_requesthdrs(&rio);   
+    }
 
     /* Parse URI from GET request */
-    is_static = parse_uri(uri, filename, cgiargs);       //line:netp:doit:staticcheck
-    if (stat(filename, &sbuf) < 0) {                     //line:netp:doit:beginnotfound
-	clienterror(fd, filename, "404", "Not found",
-		    "Tiny couldn't find this file");
-	return;
-    }                                                    //line:netp:doit:endnotfound
-
-    //Proxy as a client
+    is_static = parse(uri, hostname, path, port);       //line:netp:doit:staticcheck
+    printf("after return hostname: %s\n", hostname);
+    printf("after return path: %s\n", path);
+    printf("after return port: %s\n", port);
+    // if (stat(path, &sbuf) < 0) {                     //line:netp:doit:beginnotfound
+	// clienterror(fd, path, "404", "Not found",
+	// 	    "Tiny couldn't find this file");
+	// return;
+    // }                                                    //line:netp:doit:endnotfound
+    printf("After read and parse\n");
+    // Establish connection to the web server, request the object
     clientfd = open_clientfd(servername, serverport);
+    
     Rio_readinitb(&clientrio, clientfd);
+    printf("1\n");
     while (Fgets(clientbuf, MAXLINE, stdin) != NULL)
     {
+        printf("2\n");
+        sprintf(clientbuf, "%s %s %s\r\n", method, servername, version);
         Rio_writen(clientfd, clientbuf, strlen(clientbuf));
         Rio_readlineb(&clientrio, clientbuf, MAXLINE);
         Fputs(clientbuf, stdout);
+        
     }
+
     Close(clientfd);
+    printf("send request\n");
+    exit(0);
     
 
 
@@ -139,31 +154,58 @@ void read_requesthdrs(rio_t *rp)
  * parse_uri - parse URI into filename and CGI args
  *             return 0 if dynamic content, 1 if static
  */
-int parse_uri(char *uri, char *filename, char *cgiargs) 
+int parse(char* line, char* hostname, char* path, char* port)
 {
-    char *ptr;
+    char *temphostname;
+    char *token;
+    char *temppath;
+    char *tempport;
+    temphostname = strstr(line, "www");
+    strcpy(temppath, temphostname);
+    token = strtok(temphostname, "/");
+    if ((tempport = strstr(token, ":")) == NULL)
+    {
+        strcpy(port, "80");
+    }
+    else
+    {
+        printf("else: \n");
+        strcpy(port, tempport+1);
+    }
 
-    if (!strstr(uri, "cgi-bin")) {  /* Static content */ //line:netp:parseuri:isstatic
-	strcpy(cgiargs, "");                             //line:netp:parseuri:clearcgi
-	strcpy(filename, ".");                           //line:netp:parseuri:beginconvert1
-	strcat(filename, uri);                           //line:netp:parseuri:endconvert1
-	if (uri[strlen(uri)-1] == '/')                   //line:netp:parseuri:slashcheck
-	    strcat(filename, "home.html");               //line:netp:parseuri:appenddefault
-	return 1;
-    }
-    else {  /* Dynamic content */                        //line:netp:parseuri:isdynamic
-	ptr = index(uri, '?');                           //line:netp:parseuri:beginextract
-	if (ptr) {
-	    strcpy(cgiargs, ptr+1);
-	    *ptr = '\0';
-	}
-	else 
-	    strcpy(cgiargs, "");                         //line:netp:parseuri:endextract
-	strcpy(filename, ".");                           //line:netp:parseuri:beginconvert2
-	strcat(filename, uri);                           //line:netp:parseuri:endconvert2
-	return 0;
-    }
+    printf("port: %s\n", port);
+    strcpy(hostname, token);
+    printf("hostname: %s\n", hostname);
+    temppath = strstr(temppath, "/");
+    strcpy(path, temppath);
+    printf("path: %s\n", path);
+
 }
+// int parse_uri(char *uri, char *filename, char *cgiargs) 
+// {
+//     char *ptr;
+
+//     if (!strstr(uri, "cgi-bin")) {  /* Static content */ //line:netp:parseuri:isstatic
+// 	strcpy(cgiargs, "");                             //line:netp:parseuri:clearcgi
+// 	strcpy(filename, ".");                           //line:netp:parseuri:beginconvert1
+// 	strcat(filename, uri);                           //line:netp:parseuri:endconvert1
+// 	if (uri[strlen(uri)-1] == '/')                   //line:netp:parseuri:slashcheck
+// 	    strcat(filename, "home.html");               //line:netp:parseuri:appenddefault
+// 	return 1;
+//     }
+//     else {  /* Dynamic content */                        //line:netp:parseuri:isdynamic
+// 	ptr = index(uri, '?');                           //line:netp:parseuri:beginextract
+// 	if (ptr) {
+// 	    strcpy(cgiargs, ptr+1);
+// 	    *ptr = '\0';
+// 	}
+// 	else 
+// 	    strcpy(cgiargs, "");                         //line:netp:parseuri:endextract
+// 	strcpy(filename, ".");                           //line:netp:parseuri:beginconvert2
+// 	strcat(filename, uri);                           //line:netp:parseuri:endconvert2
+// 	return 0;
+//     }
+// }
 
 /*
  * serve_static - copy a file back to the client 
