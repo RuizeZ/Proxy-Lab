@@ -23,7 +23,7 @@ TIMEOUT=5
 MAX_RAND=63000
 PORT_START=1024
 PORT_MAX=65000
-MAX_PORT_TRIES=10
+MAX_PORT_TRIES=100
 
 # List of text and binary files for the basic test
 BASIC_LIST="home.html
@@ -217,6 +217,7 @@ cd ${HOME_DIR}
 
 # Wait for tiny to start in earnest
 wait_for_port_use "${tiny_port}"
+echo "1"
 
 # Run the proxy
 proxy_port=$(free_port)

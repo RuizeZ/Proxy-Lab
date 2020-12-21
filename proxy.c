@@ -13,6 +13,11 @@ void clienterror(int fd, char *cause, char *errnum,
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
+typedef struct cache_block{
+    char* url;
+    char* data;
+    int datasize;
+} cache_block;
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
@@ -29,6 +34,7 @@ int main(int argc, char **argv)
 	fprintf(stderr, "usage: %s <port>\n", argv[0]);
 	exit(1);
     }
+    init_cache();
     //this listenfd now is associated with a IP address and is a server fd
     //Listen for incoming connections on a port which will be specified on the command line
     listenfd = Open_listenfd(argv[1]);
@@ -77,11 +83,6 @@ void doit(int fd)
     if (strstr(uri, "http://") != NULL)
     {
         parse(uri, hostname, path, port);
-        printf("1\n");
-        printf("after return hostname: %s\n", hostname);
-        printf("after return path: %s\n", path);
-        printf("after return port: %s\n", port);
-        printf("After read and parse\n");
     }
     else{
         printf("invalid http request\n");
@@ -105,10 +106,7 @@ void doit(int fd)
     Rio_writen(clientfd, clientbuf, strlen(clientbuf));
     sprintf(clientbuf, "Proxy-Connection: close\r\n");
     Rio_writen(clientfd, clientbuf, strlen(clientbuf));
-    printf("1\n");
     read_requesthdrs(&rio, clientfd);
-    printf("send request\n");
-    sprintf(clientbuf, "lalalalal");
     //read the response
     while ((respondlength = Rio_readlineb(&clientrio, buf, MAXLINE))) {//real server response to buf
         //printf("proxy received %d bytes,then send\n",n);
@@ -121,7 +119,6 @@ void doit(int fd)
  */
 void read_requesthdrs(rio_t *rp, int clientfd) 
 {
-    printf("read_requesthdrs\n");
     char buf[MAXLINE];
     Rio_readlineb(rp, buf, MAXLINE);
     Rio_writen(clientfd, buf, MAXLINE);
@@ -144,7 +141,6 @@ void parse(char* line, char* hostname, char* path, char* port)
     
     temphostname = strstr(line, "//")+2;
     strcpy(temppath, temphostname);
-    printf("parse\n");
     token = strtok(temphostname, "/");
     if ((tempport = strstr(token, ":")) == NULL)
     {
@@ -158,12 +154,7 @@ void parse(char* line, char* hostname, char* path, char* port)
         temphostname = strtok(token, ":");
         strcpy(hostname, token);
     }
-    printf("port: %s\n", port);
-    
-    printf("hostname: %s\n", hostname);
     strcpy(path, strstr(temppath, "/"));
-    //strcpy(path, temppath);
-    printf("path: %s\n", path);
 }
 
 /*
@@ -196,7 +187,6 @@ void clienterror(int fd, char *cause, char *errnum,
     /* Print the HTTP response headers */
     sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
     Rio_writen(fd, buf, strlen(buf));
-    printf("method:\n");
     sprintf(buf, "Content-type: text/html\r\n\r\n");
     Rio_writen(fd, buf, strlen(buf));
 
