@@ -2,10 +2,10 @@
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
 typedef struct cache_block{
-    char data[MAX_OBJECT_SIZE];
+    int time;
     char url[MAXLINE];
     int datasize;
-    int time;
+    char data[MAX_OBJECT_SIZE];
 } cache_block;
 
 //intialize cache with malloc

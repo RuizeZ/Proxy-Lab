@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "csapp.h"
+#include "cache.h"
 
 void doit(int fd);
 void read_requesthdrs(rio_t *rp, int clientfd);
@@ -13,11 +14,11 @@ void clienterror(int fd, char *cause, char *errnum,
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
-typedef struct cache_block{
-    char* url;
-    char* data;
-    int datasize;
-} cache_block;
+// typedef struct cache_block{
+//     char* url;
+//     char* data;
+//     int datasize;
+// } cache_block;
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
@@ -50,6 +51,7 @@ int main(int argc, char **argv)
 	doit(connfd);
 	Close(connfd);
     }
+    free_cache();
 }
 
 /*
@@ -57,9 +59,9 @@ int main(int argc, char **argv)
  */
 void doit(int fd)
 {
-    int is_static, clientfd, respondlength;
+    int is_static, clientfd, respondlength, totalrespondsize=0;
     struct stat sbuf;
-    char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE], clientbuf[MAXLINE], servername[MAXLINE], serverport[MAXLINE];
+    char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE], clientbuf[MAXLINE], servername[MAXLINE], serverport[MAXLINE], totalbufincache[MAX_OBJECT_SIZE], CachedUri[MAXLINE];
     char filename[MAXLINE], cgiargs[MAXLINE], hostname[MAXLINE], path[MAXLINE], port[5];
     rio_t rio, clientrio;
 
@@ -82,36 +84,56 @@ void doit(int fd)
     /* Parse URI from GET request */
     if (strstr(uri, "http://") != NULL)
     {
+        strcpy(CachedUri, uri);
         parse(uri, hostname, path, port);
     }
     else{
         printf("invalid http request\n");
         goto readtherequestline;
     }
-    
-    // Establish connection to the web server, request the object
-    clientfd = Open_clientfd(hostname, port);
-    if(clientfd<0){
-        printf("connection failed\n");
-        return;
-    }
-    Rio_readinitb(&clientrio, clientfd);
-    sprintf(clientbuf, "%s %s HTTP/1.0\r\n", method, path);
-    Rio_writen(clientfd, clientbuf, strlen(clientbuf));
-    sprintf(clientbuf, "Host: %s\r\n", hostname);
-    Rio_writen(clientfd, clientbuf, strlen(clientbuf));
-    sprintf(clientbuf, "%s\r\n", user_agent_hdr);
-    Rio_writen(clientfd, clientbuf, strlen(clientbuf));
-    sprintf(clientbuf, "Connection: close\r\n");
-    Rio_writen(clientfd, clientbuf, strlen(clientbuf));
-    sprintf(clientbuf, "Proxy-Connection: close\r\n");
-    Rio_writen(clientfd, clientbuf, strlen(clientbuf));
-    read_requesthdrs(&rio, clientfd);
-    //read the response
-    while ((respondlength = Rio_readlineb(&clientrio, buf, MAXLINE))) {//real server response to buf
-        //printf("proxy received %d bytes,then send\n",n);
-        Rio_writen(fd, buf, respondlength);  //real server response to real client
-    }
+
+    printf("read cache\n");
+    if(!read_cache(CachedUri, fd))
+    {
+        printf("not in the cache\n");
+        // Establish connection to the web server, request the object
+        clientfd = Open_clientfd(hostname, port);
+        
+        if(clientfd<0){
+            printf("connection failed\n");
+            return;
+        }
+        Rio_readinitb(&clientrio, clientfd); 
+        sprintf(clientbuf, "%s %s HTTP/1.0\r\n", method, path);
+        Rio_writen(clientfd, clientbuf, strlen(clientbuf));
+        sprintf(clientbuf, "Host: %s\r\n", hostname);
+        Rio_writen(clientfd, clientbuf, strlen(clientbuf));
+        sprintf(clientbuf, "%s\r\n", user_agent_hdr);
+        Rio_writen(clientfd, clientbuf, strlen(clientbuf));
+        sprintf(clientbuf, "Connection: close\r\n");
+        Rio_writen(clientfd, clientbuf, strlen(clientbuf));
+        sprintf(clientbuf, "Proxy-Connection: close\r\n");
+        Rio_writen(clientfd, clientbuf, strlen(clientbuf));
+        read_requesthdrs(&rio, clientfd);
+        
+        //read the response
+        while ((respondlength = Rio_readlineb(&clientrio, buf, MAXLINE))) {//real server response to buf
+            //printf("proxy received %d bytes,then send\n",n);
+            Rio_writen(fd, buf, respondlength);  //real server response to real client
+            //write to cache
+            totalrespondsize += respondlength;
+            if(totalrespondsize <= MAX_OBJECT_SIZE)
+            {
+                strcat(totalbufincache, buf); 
+            }
+        }
+        if (totalrespondsize <= MAX_OBJECT_SIZE)
+        {
+            printf("need to write cache\n");
+            write_cache(CachedUri, totalbufincache, totalrespondsize);
+        }
+        strcpy(totalbufincache, "");
+    }   
 }
 
 /*
@@ -149,7 +171,6 @@ void parse(char* line, char* hostname, char* path, char* port)
     }
     else
     {
-        printf("else: \n");
         strcpy(port, tempport+1);
         temphostname = strtok(token, ":");
         strcpy(hostname, token);
